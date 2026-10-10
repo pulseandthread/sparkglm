@@ -14,6 +14,8 @@ usage: start-node.sh --rank 0|1 --leader-address IP --model-root DIR --image TAG
                      [--prefix-cache-dir DIR [--prefix-cache-gb 16-100]]
                      [--display-carveout] [--cuda-cache DIR] [--name NAME]
                      [--living-dir DIR] [--dump-hidden DIR]
+                     [--steer-dir DIR [--steer-layer N] [--steer-scale D]]
+                     [--dump-layer-hidden DIR [--dump-layer-rows all]]
 
   --leader-address   rank 0's IPv4 address on the direct Spark-to-Spark fabric
   --model-root       directory holding nvidia--GLM-5.3-Flash-NVFP4,
@@ -38,6 +40,13 @@ usage: start-node.sh --rank 0|1 --leader-address IP --model-root DIR --image TAG
   --living-dir       living-weights sidecar directory (index.json + safetensors),
                      mounted read-only and passed as --living-dir; LIVING_TOPICS
                      in the environment is forwarded; the same on both ranks
+  --steer-dir        steering vectors (index.json + safetensors with v), mounted
+                     read-only; added after layer N (--steer-layer, default the
+                     middle layer) at dose D (--steer-scale, default 0; set it
+                     live with POST /v1/living/steer); the same on both ranks
+  --dump-layer-hidden append the residual rows after that layer to
+                     DIR/hidden.f32 + DIR/index.jsonl (rank 0 writes; the last
+                     prompt token, or every token with --dump-layer-rows all)
   --dump-hidden      append the pre-final-norm rows to DIR/hidden.f32 +
                      DIR/index.jsonl (ATLAS_DUMP_LAST_HIDDEN; rank 0 writes)
 EOF
@@ -45,7 +54,7 @@ EOF
 }
 rank="" leader="" iface="" model_root="" image="" hca=rocep1s0f0
 cache="$HOME/.cache/atlas-cuda" name="" profile=4x512k util="" pc_dir="" pc_gb="" carveout=""
-living="" dump=""
+living="" dump="" steer="" steer_layer="" steer_scale="" dump_layer="" dump_layer_rows=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rank) rank=$2; shift 2 ;;
@@ -63,6 +72,11 @@ while [[ $# -gt 0 ]]; do
     --display-carveout) carveout=1; shift ;;
     --living-dir) living=$2; shift 2 ;;
     --dump-hidden) dump=$2; shift 2 ;;
+    --steer-dir) steer=$2; shift 2 ;;
+    --steer-layer) steer_layer=$2; shift 2 ;;
+    --steer-scale) steer_scale=$2; shift 2 ;;
+    --dump-layer-hidden) dump_layer=$2; shift 2 ;;
+    --dump-layer-rows) dump_layer_rows=$2; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -131,6 +145,18 @@ if [[ -n $dump ]]; then
   mkdir -p "$dump" && dump=$(realpath "$dump")
   living_args+=(--mount "type=bind,src=$dump,dst=$dump" -e SPARKGLM_DUMP_LAST_HIDDEN="$dump")
 fi
+if [[ -n $steer ]]; then
+  [[ -f $steer/index.json ]] || { echo "missing $steer/index.json" >&2; exit 2; }
+  steer=$(realpath "$steer")
+  living_args+=(--mount "type=bind,src=$steer,dst=$steer,readonly" -e SPARKGLM_STEER_DIR="$steer")
+fi
+[[ -z $steer_layer ]] || living_args+=(-e SPARKGLM_STEER_LAYER="$steer_layer")
+[[ -z $steer_scale ]] || living_args+=(-e SPARKGLM_STEER_SCALE="$steer_scale")
+if [[ -n $dump_layer ]]; then
+  mkdir -p "$dump_layer" && dump_layer=$(realpath "$dump_layer")
+  living_args+=(--mount "type=bind,src=$dump_layer,dst=$dump_layer" -e SPARKGLM_DUMP_LAYER_HIDDEN="$dump_layer")
+fi
+[[ -z $dump_layer_rows ]] || living_args+=(-e SPARKGLM_DUMP_LAYER_ROWS="$dump_layer_rows")
 # The overlay links into the original checkpoint, so it is mounted at the same
 # absolute path inside the container.
 docker run -d --name "$name" --restart no --network host --ipc host \

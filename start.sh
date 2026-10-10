@@ -12,6 +12,12 @@
 # Living weights (.env, all optional): LIVING_DIR=/abs/dir (index.json +
 # safetensors; mirrored to the worker on start), LIVING_TOPICS=a,b, and
 # DUMP_HIDDEN=/abs/dir (rank 0 appends pre-final-norm rows there).
+# Steering (.env, all optional): STEER_DIR=/abs/dir (index.json + safetensors
+# with v; mirrored to the worker on start), STEER_LAYER=N (default the middle
+# layer), STEER_SCALE=d (starting dose, default 0; change it live with
+# POST /v1/living/steer {"scale": d}), DUMP_LAYER_HIDDEN=/abs/dir (rank 0
+# appends the residual rows after that layer) and DUMP_LAYER_ROWS=all (every
+# prompt token instead of the last).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 if [[ -f .env ]]; then set -a; . ./.env; set +a; fi
@@ -32,11 +38,14 @@ script_on_worker() {
   local script=$1; shift
   on_worker "${LIVING_TOPICS:+LIVING_TOPICS=$(printf '%q' "$LIVING_TOPICS") }bash -s -- $(printf '%q ' "$@")" < "$script"
 }
-# Both ranks load the same sidecar: mirror LIVING_DIR to the worker first.
+# Both ranks load the same sidecar and steering vectors: mirror LIVING_DIR and
+# STEER_DIR to the worker first.
 living_to_worker() {
-  [[ -n ${LIVING_DIR:-} ]] || return 0
-  on_worker mkdir -p "$LIVING_DIR"
-  rsync -a --delete "$LIVING_DIR/" "$WORKER:$LIVING_DIR/"
+  local dir
+  for dir in ${LIVING_DIR:-} ${STEER_DIR:-}; do
+    on_worker mkdir -p "$dir"
+    rsync -a --delete "$dir/" "$WORKER:$dir/"
+  done
 }
 has_image() { docker image inspect "$IMAGE" >/dev/null 2>&1; }
 
@@ -111,7 +120,10 @@ serve() {
           --profile "$PROFILE" --fabric-hca "$FABRIC_HCA" ${FABRIC_INTERFACE:+--fabric-interface "$FABRIC_INTERFACE"}
           ${GPU_MEMORY_UTILIZATION:+--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"}
           ${PREFIX_CACHE_DIR:+--prefix-cache-dir "$PREFIX_CACHE_DIR"} ${PREFIX_CACHE_GB:+--prefix-cache-gb "$PREFIX_CACHE_GB"}
-          ${LIVING_DIR:+--living-dir "$LIVING_DIR"} ${DUMP_HIDDEN:+--dump-hidden "$DUMP_HIDDEN"})
+          ${LIVING_DIR:+--living-dir "$LIVING_DIR"} ${DUMP_HIDDEN:+--dump-hidden "$DUMP_HIDDEN"}
+          ${STEER_DIR:+--steer-dir "$STEER_DIR"} ${STEER_LAYER:+--steer-layer "$STEER_LAYER"}
+          ${STEER_SCALE:+--steer-scale "$STEER_SCALE"} ${DUMP_LAYER_HIDDEN:+--dump-layer-hidden "$DUMP_LAYER_HIDDEN"}
+          ${DUMP_LAYER_ROWS:+--dump-layer-rows "$DUMP_LAYER_ROWS"})
   case ${DISPLAY_CARVEOUT:-0} in
     0) ;;
     1) common+=(--display-carveout) ;;

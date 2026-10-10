@@ -109,16 +109,29 @@ def launch(environ, profile):
 
 
 def living_weights(environ, env):
-    """Living weights, both off by default: SPARKGLM_LIVING_DIR becomes
+    """Living weights, all off by default: SPARKGLM_LIVING_DIR becomes
     --living-dir (LIVING_TOPICS passes through as ordinary environment), and
-    SPARKGLM_DUMP_LAST_HIDDEN becomes ATLAS_DUMP_LAST_HIDDEN in `env`.
-    Returns the extra server arguments."""
-    for key in ('SPARKGLM_LIVING_DIR', 'SPARKGLM_DUMP_LAST_HIDDEN'):
+    SPARKGLM_DUMP_LAST_HIDDEN becomes ATLAS_DUMP_LAST_HIDDEN in `env`; the
+    steering knobs SPARKGLM_STEER_DIR / _LAYER / _SCALE and
+    SPARKGLM_DUMP_LAYER_HIDDEN / _ROWS become ATLAS_STEER_DIR / _LAYER / _SCALE
+    and ATLAS_DUMP_LAYER_HIDDEN / _ROWS. Returns the extra server arguments."""
+    for key in ('SPARKGLM_LIVING_DIR', 'SPARKGLM_DUMP_LAST_HIDDEN', 'SPARKGLM_STEER_DIR',
+                'SPARKGLM_DUMP_LAYER_HIDDEN'):
         path = environ.get(key, '')
         if path and (not Path(path).is_absolute() or any(c in path for c in '\r\n\0')):
             raise ValueError(f'{key} must be an absolute path')
+    checks = {'SPARKGLM_STEER_LAYER': r'[0-9]{1,3}', 'SPARKGLM_STEER_SCALE': r'-?[0-9]+(\.[0-9]+)?',
+              'SPARKGLM_DUMP_LAYER_ROWS': r'all|last'}
+    for key, pattern in checks.items():
+        if environ.get(key) and not re.fullmatch(pattern, environ[key]):
+            raise ValueError(f'Invalid {key}')
     if environ.get('SPARKGLM_DUMP_LAST_HIDDEN'):
         env['ATLAS_DUMP_LAST_HIDDEN'] = environ['SPARKGLM_DUMP_LAST_HIDDEN']
+    for key in ('STEER_DIR', 'STEER_LAYER', 'STEER_SCALE', 'DUMP_LAYER_HIDDEN'):
+        if environ.get(f'SPARKGLM_{key}'):
+            env[f'ATLAS_{key}'] = environ[f'SPARKGLM_{key}']
+    if environ.get('SPARKGLM_DUMP_LAYER_ROWS'):
+        env['ATLAS_DUMP_LAYER_HIDDEN_ROWS'] = environ['SPARKGLM_DUMP_LAYER_ROWS']
     if environ.get('SPARKGLM_LIVING_DIR'):
         return [f"--living-dir={environ['SPARKGLM_LIVING_DIR']}"]
     return []
