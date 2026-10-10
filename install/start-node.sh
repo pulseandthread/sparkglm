@@ -13,6 +13,7 @@ usage: start-node.sh --rank 0|1 --leader-address IP --model-root DIR --image TAG
                      [--profile 4x512k|8x128k|FILE] [--gpu-memory-utilization 0.80-0.95]
                      [--prefix-cache-dir DIR [--prefix-cache-gb 16-100]]
                      [--display-carveout] [--cuda-cache DIR] [--name NAME]
+                     [--living-dir DIR] [--dump-hidden DIR]
 
   --leader-address   rank 0's IPv4 address on the direct Spark-to-Spark fabric
   --model-root       directory holding nvidia--GLM-5.3-Flash-NVFP4,
@@ -34,11 +35,17 @@ usage: start-node.sh --rank 0|1 --leader-address IP --model-root DIR --image TAG
                      CAP_SYS_ADMIN to export it, which the server drops before
                      it loads anything; use it on both ranks (default: off)
   --cuda-cache       persistent CUDA JIT cache (default: ~/.cache/atlas-cuda)
+  --living-dir       living-weights sidecar directory (index.json + safetensors),
+                     mounted read-only and passed as --living-dir; LIVING_TOPICS
+                     in the environment is forwarded; the same on both ranks
+  --dump-hidden      append the pre-final-norm rows to DIR/hidden.f32 +
+                     DIR/index.jsonl (ATLAS_DUMP_LAST_HIDDEN; rank 0 writes)
 EOF
   exit 2
 }
 rank="" leader="" iface="" model_root="" image="" hca=rocep1s0f0
 cache="$HOME/.cache/atlas-cuda" name="" profile=4x512k util="" pc_dir="" pc_gb="" carveout=""
+living="" dump=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rank) rank=$2; shift 2 ;;
@@ -54,6 +61,8 @@ while [[ $# -gt 0 ]]; do
     --prefix-cache-dir) pc_dir=$2; shift 2 ;;
     --prefix-cache-gb) pc_gb=$2; shift 2 ;;
     --display-carveout) carveout=1; shift ;;
+    --living-dir) living=$2; shift 2 ;;
+    --dump-hidden) dump=$2; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -109,6 +118,19 @@ if [[ -n $carveout ]]; then
   carveout_args=(--cap-add SYS_ADMIN --mount "type=bind,src=$lock_dir,dst=$lock_dir"
     -e SPARKGLM_DISPLAY_CARVEOUT=1)
 fi
+# Living weights: the sidecar directory read-only, the dump directory writable,
+# both at their host paths.
+living_args=()
+if [[ -n $living ]]; then
+  [[ -f $living/index.json ]] || { echo "missing $living/index.json" >&2; exit 2; }
+  living=$(realpath "$living")
+  living_args+=(--mount "type=bind,src=$living,dst=$living,readonly" -e SPARKGLM_LIVING_DIR="$living")
+  [[ -z ${LIVING_TOPICS:-} ]] || living_args+=(-e LIVING_TOPICS="$LIVING_TOPICS")
+fi
+if [[ -n $dump ]]; then
+  mkdir -p "$dump" && dump=$(realpath "$dump")
+  living_args+=(--mount "type=bind,src=$dump,dst=$dump" -e SPARKGLM_DUMP_LAST_HIDDEN="$dump")
+fi
 # The overlay links into the original checkpoint, so it is mounted at the same
 # absolute path inside the container.
 docker run -d --name "$name" --restart no --network host --ipc host \
@@ -119,7 +141,7 @@ docker run -d --name "$name" --restart no --network host --ipc host \
   --mount "type=bind,src=$overlay,dst=$overlay,readonly" \
   --mount "type=bind,src=$drafter,dst=$drafter,readonly" \
   --mount "type=bind,src=$cache,dst=/atlas-cuda-cache" ${profile_mount[@]+"${profile_mount[@]}"} ${pc_args[@]+"${pc_args[@]}"} \
-  ${carveout_args[@]+"${carveout_args[@]}"} \
+  ${carveout_args[@]+"${carveout_args[@]}"} ${living_args[@]+"${living_args[@]}"} \
   -e NODE_RANK="$rank" -e MASTER_ADDR="$leader" -e MASTER_PORT=29510 \
   -e FABRIC_INTERFACE="$iface" -e FABRIC_HCA="$hca" \
   -e MODEL_PATH="$overlay" -e DRAFTER_PATH="$drafter" \

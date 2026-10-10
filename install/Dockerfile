@@ -51,6 +51,12 @@ ARG BUILD_JOBS=4
 RUN --mount=type=cache,target=/build/target,id=atlas-cargo-target,sharing=shared \
     cargo build --locked --release -j "$BUILD_JOBS" -p spark-server && \
     install -D target/release/spark /build/dist/spark
+# The living_site kernel microtest, for `docker build --target builder` and
+# `docker run --gpus all <builder> /build/dist/living_site_microtest`; not shipped.
+RUN --mount=type=cache,target=/build/target,id=atlas-cargo-target,sharing=shared \
+    cargo build --locked --release -j "$BUILD_JOBS" -p spark-model --features gpu-examples \
+      --example living_site_microtest && \
+    install -D target/release/examples/living_site_microtest /build/dist/living_site_microtest
 # License notices of every third-party crate compiled into the binary.
 COPY install/rust-notices.py /product/install/rust-notices.py
 RUN python3 /product/install/rust-notices.py /build /build/dist/notices-rust

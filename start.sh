@@ -8,6 +8,10 @@
 #   ./start.sh status       container state and health
 #   ./start.sh logs [worker]
 #   ./start.sh build | download | convert    run one preparation step
+#
+# Living weights (.env, all optional): LIVING_DIR=/abs/dir (index.json +
+# safetensors; mirrored to the worker on start), LIVING_TOPICS=a,b, and
+# DUMP_HIDDEN=/abs/dir (rank 0 appends pre-final-norm rows there).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 if [[ -f .env ]]; then set -a; . ./.env; set +a; fi
@@ -24,7 +28,16 @@ NAME=atlas-sparkglm-rank
 say() { printf '\033[1m== %s\033[0m\n' "$*"; }
 on_worker() { ssh -o BatchMode=yes "$WORKER" "$@"; }
 # Run a local script on the worker with safely quoted arguments.
-script_on_worker() { local script=$1; shift; on_worker "bash -s -- $(printf '%q ' "$@")" < "$script"; }
+script_on_worker() {
+  local script=$1; shift
+  on_worker "${LIVING_TOPICS:+LIVING_TOPICS=$(printf '%q' "$LIVING_TOPICS") }bash -s -- $(printf '%q ' "$@")" < "$script"
+}
+# Both ranks load the same sidecar: mirror LIVING_DIR to the worker first.
+living_to_worker() {
+  [[ -n ${LIVING_DIR:-} ]] || return 0
+  on_worker mkdir -p "$LIVING_DIR"
+  rsync -a --delete "$LIVING_DIR/" "$WORKER:$LIVING_DIR/"
+}
 has_image() { docker image inspect "$IMAGE" >/dev/null 2>&1; }
 
 build() {
@@ -97,7 +110,8 @@ serve() {
   common=(--leader-address "$address" --model-root "$MODEL_ROOT" --image "$IMAGE"
           --profile "$PROFILE" --fabric-hca "$FABRIC_HCA" ${FABRIC_INTERFACE:+--fabric-interface "$FABRIC_INTERFACE"}
           ${GPU_MEMORY_UTILIZATION:+--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"}
-          ${PREFIX_CACHE_DIR:+--prefix-cache-dir "$PREFIX_CACHE_DIR"} ${PREFIX_CACHE_GB:+--prefix-cache-gb "$PREFIX_CACHE_GB"})
+          ${PREFIX_CACHE_DIR:+--prefix-cache-dir "$PREFIX_CACHE_DIR"} ${PREFIX_CACHE_GB:+--prefix-cache-gb "$PREFIX_CACHE_GB"}
+          ${LIVING_DIR:+--living-dir "$LIVING_DIR"} ${DUMP_HIDDEN:+--dump-hidden "$DUMP_HIDDEN"})
   case ${DISPLAY_CARVEOUT:-0} in
     0) ;;
     1) common+=(--display-carveout) ;;
@@ -105,6 +119,7 @@ serve() {
   esac
   say "start rank 1 on $WORKER, then rank 0 here (leader $address, profile $PROFILE)"
   stop
+  living_to_worker
   script_on_worker install/start-node.sh --rank 1 "${common[@]}"
   install/start-node.sh --rank 0 "${common[@]}"
   say "loading (about 2.5 minutes)"

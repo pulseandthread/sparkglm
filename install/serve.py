@@ -99,12 +99,29 @@ def launch(environ, profile):
         args = [f'--gpu-memory-utilization={util}' if a.startswith('--gpu-memory-utilization=') else a
                 for a in args]
     env.update(disk_prefix_cache(environ.get('SPARKGLM_PREFIX_CACHE_GB', '')))
+    args += living_weights(environ, env)
     name = environ.get('SERVED_MODEL_NAME', 'glm-5.3-flash-atlas')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,127}', name):
         raise ValueError('Invalid SERVED_MODEL_NAME')
     args += [f'--rank={rank}', f'--master-addr={master}', f'--master-port={port}',
              '--bind=127.0.0.1', f'--port={8893 + int(rank)}', f'--model-name={name}']
     return display_carveout(environ, ['/usr/local/bin/spark', *args]), env
+
+
+def living_weights(environ, env):
+    """Living weights, both off by default: SPARKGLM_LIVING_DIR becomes
+    --living-dir (LIVING_TOPICS passes through as ordinary environment), and
+    SPARKGLM_DUMP_LAST_HIDDEN becomes ATLAS_DUMP_LAST_HIDDEN in `env`.
+    Returns the extra server arguments."""
+    for key in ('SPARKGLM_LIVING_DIR', 'SPARKGLM_DUMP_LAST_HIDDEN'):
+        path = environ.get(key, '')
+        if path and (not Path(path).is_absolute() or any(c in path for c in '\r\n\0')):
+            raise ValueError(f'{key} must be an absolute path')
+    if environ.get('SPARKGLM_DUMP_LAST_HIDDEN'):
+        env['ATLAS_DUMP_LAST_HIDDEN'] = environ['SPARKGLM_DUMP_LAST_HIDDEN']
+    if environ.get('SPARKGLM_LIVING_DIR'):
+        return [f"--living-dir={environ['SPARKGLM_LIVING_DIR']}"]
+    return []
 
 
 # Bind-mounted from the host by start-node.sh and the LLooM recipe, so every
