@@ -1,10 +1,10 @@
 {
   "schema": "sparkglm.atlas-engine-source/v2",
-  "note": "Local living-weights fork of the Enntity/atlas pin 72588541 (two commits on top: living_site residual hook before the final norm, sidecar loader, hidden dump; then steering after a middle layer with a runtime dose and a layer dump). Not published.",
+  "note": "Living-weights fork of the Enntity/atlas pin 72588541 (three commits on top: living_site residual hook before the final norm, sidecar loader, hidden dump; steering after a middle layer with a runtime dose and a layer dump; README numbers). Published at github.com/pulseandthread/atlas, branch living.",
   "repository": "https://github.com/pulseandthread/atlas",
   "branch": "living",
-  "commit": "0a489796811f5acec18dd0f07f38f58fd96dbc56",
-  "tree": "d496f09d5f6c209ff05e3423c65561c060bdca89",
+  "commit": "248a946bdd1924f4a56fc981ec8c367053c76347",
+  "tree": "3ef818057ed6e801a2881736978421682c80b951",
   "layers": {
     "atlas_inf_main_base": "6a3d24ecb891adac1fac8edeef92de29bb6f3e15",
     "upstream_candidate": {
@@ -22,13 +22,13 @@
       "note": "This pin's tree equals fix/carveout-placement (fdd2f965 + 57d1fe4d + 72588541); 57d1fe4d's binary was measured on the pair (results/2026-10-05-carveout-placement), 72588541 changes comments only."
     },
     "living": {
-      "commit": "f9e81a7c92e2b7eedbe6dad5b0bfff3eba6ca51d",
+      "commit": "02e87265",
       "base": "72588541a466f53cb9d38afd74c515e14ab601db",
       "note": "--living-dir / LIVING_TOPICS / ATLAS_DUMP_LAST_HIDDEN; all off by default."
     },
     "living_steer": {
-      "commit": "0a489796811f5acec18dd0f07f38f58fd96dbc56",
-      "base": "f9e81a7c92e2b7eedbe6dad5b0bfff3eba6ca51d",
+      "commit": "131181f6",
+      "base": "02e87265",
       "note": "ATLAS_STEER_DIR / ATLAS_STEER_LAYER / ATLAS_STEER_SCALE, POST /v1/living/steer, ATLAS_DUMP_LAYER_HIDDEN; all off by default."
     }
   },
